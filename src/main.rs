@@ -127,12 +127,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let ip = get_ip(&agent)?;
             // Check if the current IP address is the same as the record content
             if ip == record.content {
-                println!("IP address ({ip}) is the same as the record content, no update needed.");
+                println!("[{}] IP address {ip} is the same as the record content, no update needed.", domain);
                 return Ok(());
             }
             // Update the DNS record with the new IP address
             update_record(&agent, &token, &zone.id, record, &ip)?;
-            println!("Updated record: {}: {} -> {}", record.name, record.content, ip);
+            println!("[{}] Updated record: {} -> {}", domain, record.content, ip);
             return Ok(());
         }
     }
