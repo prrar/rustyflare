@@ -1,0 +1,8 @@
+services:
+  rustyflare:
+    build: .
+    image: rustyflare
+    container_name: rustyflare
+    env_file: .env
+    init: true
+    restart: unless-stopped
