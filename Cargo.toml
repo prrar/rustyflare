@@ -6,3 +6,12 @@ edition = "2024"
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
 ureq = { version = "3.4.2", features = ["json"] }
+
+# Release profile tuned for a small binary.
+# Slower compile times are an acceptable trade-off for this project.
+[profile.release]
+strip = true        # Remove the symbol table from the binary
+lto = true          # Link-time optimization: optimize across crates and drop dead code
+codegen-units = 1   # Compile as a single unit so LLVM can optimize more aggressively
+opt-level = "z"     # Optimize for size instead of speed
+panic = "abort"     # Abort on panic instead of unwinding the stack (no unwinding code)
