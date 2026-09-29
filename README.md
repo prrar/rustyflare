@@ -52,7 +52,11 @@ services:
   rustyflare:
     image: ghcr.io/prrar/rustyflare:latest
     container_name: rustyflare
-    env_file: .env
+    environment:
+      - CF_API_TOKEN=${CF_API_TOKEN}
+      - CF_DOMAIN=${CF_DOMAIN}
+      #- CF_ZONE_ID=${CF_ZONE_ID} # optional
+      #- CF_INTERVAL=300 # optional, default 300 seconds
     init: true
     restart: unless-stopped
 ```
