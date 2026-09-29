@@ -1,6 +1,8 @@
 # rustyflare
 
-A minimal dynamic DNS updater for Cloudflare, written in Rust.
+A minimal dynamic DNS updater for Cloudflare, written in Rust. Docker image is also very small, based on `busybox`.
+
+No `zone id` is needed, only a CloudFlare API token with `DNS EDIT` permission and the domain to be updated.
 
 It checks the machine's public IPv4 address and, if it differs from the content of a Cloudflare `A` record, updates the record. It runs once and exits; scheduling is left to something else (the included Docker setup runs it in a loop).
 
@@ -22,12 +24,10 @@ Exit code is `0` when the record is up to date or was updated, and `1` on any er
 | `CF_ZONE_ID`   | no       | Zone ID; skips the zone lookup when set                            |
 | `CF_INTERVAL`  | no       | Seconds between runs in Docker (default `300`)                     |
 
-The API token needs these permissions:
-
-- **Zone → Zone → Read** (to list zones)
+The API token needs this permission:
 - **Zone → DNS → Edit** (to read and update the record)
 
-The record must already exist; rustyflare only updates it, it never creates one.
+The record must already exist; `rustyflare` only updates it, it never creates one.
 
 ## Running with Docker Compose
 
@@ -71,12 +71,6 @@ docker logs -f rustyflare
 cargo build --release
 CF_API_TOKEN=your_token CF_DOMAIN=home.example.com ./target/release/rustyflare
 ```
-
-## Limitations
-
-- IPv4 only (`A` records).
-- Updates a single record per instance.
-- Zone lookup covers the first 50 active zones in the account.
 
 ## License
 
