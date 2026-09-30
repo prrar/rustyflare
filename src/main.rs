@@ -4,13 +4,12 @@
 // ENV:
 // - CF_API_TOKEN: Your Cloudflare API token
 // - CF_DOMAIN: The domain name to update (e.g., sub.example.com)
-// - CF_ZONE_ID: (Optional) The Cloudflare zone ID. If not provided, the program will
-//               fetch all zones and search for the record.
 //
 // --prrar
 
 use serde::{Deserialize, Serialize};
 use std::error::Error;
+use std::process::ExitCode;
 use std::time::Duration;
 use ureq::Agent;
 
@@ -22,12 +21,17 @@ const API_URL: &str = "https://api.cloudflare.com/client/v4";
 #[derive(Debug, Deserialize)]
 struct Zone {
     id: String,
+    name: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Record {
     id: String,
-    name: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct NewRecord {
     content: String,
 }
 
@@ -37,105 +41,128 @@ struct Response<T> {
     result: Vec<T>,
 }
 
-// Function to retrieve all active zones
-fn get_zones(agent: &Agent, token: &str) -> Result<Vec<Zone>, ureq::Error> {
-    let header = format!("Bearer {token}");
-    let url: String = format!("{API_URL}/zones?per_page=50&status=active");
-    let response: Response<Zone> = agent.get(url)
-        .header("Authorization", header)
-        .call()?
-        .body_mut()
-        .read_json()?;
-
-    Ok(response.result)
+struct Cloudflare {
+    agent: Agent,
+    header: String,
 }
 
-// Function to search for a specific DNS record by domain name
-fn search_record(agent: &Agent, token: &str, zone_id: &str, domain: &str) -> Result<Vec<Record>, ureq::Error> {
-    let header = format!("Bearer {token}");
-    let url: String = format!("{API_URL}/zones/{zone_id}/dns_records?type=A&name.exact={domain}");
-    let response: Response<Record> = agent.get(url)
-        .header("Authorization", header)
-        .call()?
-        .body_mut()
-        .read_json()?;
+impl Cloudflare {
+    fn new(agent: Agent, token: &str) -> Self {
+        let header = format!("Bearer {token}");
 
-    Ok(response.result)
-}
-
-// Function to update a DNS record with a new IP address
-fn update_record(agent: &Agent, token: &str, zone_id: &str, record: &Record, new_ip: &str) -> Result<(), ureq::Error> {
-    let header = format!("Bearer {token}");
-    let url: String = format!("{API_URL}/zones/{zone_id}/dns_records/{}",record.id);
-    let new_record = Record {
-        id: record.id.clone(),
-        name: record.name.clone(),
-        content: new_ip.to_string(),
-    };
-    agent.patch(url)
-        .header("Authorization", header)
-        .send_json(&new_record)?;
-
-    Ok(())
-}
-
-// Function to get the current public IP address of the machine
-fn get_ip(agent: &Agent) -> Result<String, ureq::Error> {
-    let body = agent.get(GET_IP_URL)
-        .call()?
-        .body_mut()
-        .read_to_string()?;
-    Ok(body.trim().to_string())
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
-    // Retrieve the Cloudflare API token and domain from environment variables
-    let token = std::env::var("CF_API_TOKEN")
-        .map_err(|_| "CF_API_TOKEN not defined")?
-        .trim()
-        .to_string();
-    if token.is_empty() {
-        return Err("CF_API_TOKEN is empty".into());
+        Self { agent, header }
     }
 
-    let domain = std::env::var("CF_DOMAIN")
-        .map_err(|_| "CF_DOMAIN not defined")?
+    fn get_zone_id(&self, domain: &str) -> Result<String, Box<dyn Error>> {
+        let zones: Response<Zone> = self
+            .agent
+            .get(format!("{API_URL}/zones?per_page=50&status=active"))
+            .header("Authorization", &self.header)
+            .call()
+            .map_err(|e| format!("listing zones: {e}"))?
+            .body_mut()
+            .read_json()
+            .map_err(|e| format!("listing zones: {e}"))?;
+        let zone_id = zones
+            .result
+            .into_iter()
+            .filter(|z| domain == z.name || domain.ends_with(&format!(".{}", z.name)))
+            .max_by_key(|z| z.name.len())
+            .ok_or("zone for the domain was not found")?
+            .id;
+        Ok(zone_id)
+    }
+
+    fn get_record(&self, zone_id: &str, domain: &str) -> Result<Record, Box<dyn Error>> {
+        let records: Response<Record> = self
+            .agent
+            .get(format!(
+                "{API_URL}/zones/{zone_id}/dns_records?type=A&name.exact={domain}"
+            ))
+            .header("Authorization", &self.header)
+            .call()
+            .map_err(|e| format!("listing records: {e}"))?
+            .body_mut()
+            .read_json()
+            .map_err(|e| format!("listing records: {e}"))?;
+        if records.result.len() > 1 {
+            return Err("more than one record for the domain was found".into());
+        }
+        let record = records
+            .result
+            .into_iter()
+            .next()
+            .ok_or("record for the domain was not found")?;
+        Ok(record)
+    }
+
+    fn patch_record(
+        &self,
+        zone_id: &str,
+        record_id: &str,
+        new_ip: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        let new_record = NewRecord {
+            content: new_ip.to_string(),
+        };
+        self.agent
+            .patch(format!("{API_URL}/zones/{zone_id}/dns_records/{record_id}"))
+            .header("Authorization", &self.header)
+            .send_json(&new_record)
+            .map_err(|e| format!("patching record: {e}"))?;
+        Ok(())
+    }
+}
+
+fn get_ip(agent: &Agent) -> Result<String, Box<dyn Error>> {
+    let body = agent
+        .get(GET_IP_URL)
+        .call()
+        .map_err(|e| format!("fetching public IP: {e}"))?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| format!("fetching public IP: {e}"))?;
+    let ip: std::net::Ipv4Addr = body
         .trim()
+        .parse()
+        .map_err(|e| format!("invalid IP from {GET_IP_URL}: {e}"))?;
+    Ok(ip.to_string())
+}
+
+fn from_env() -> Result<(String, String), Box<dyn Error>> {
+    let token = std::env::var("CF_API_TOKEN").map_err(|_| "CF_API_TOKEN not defined.")?;
+    let domain = std::env::var("CF_DOMAIN")
+        .map_err(|_| "CF_DOMAIN not defined.")?
         .trim_end_matches('.')
         .to_lowercase();
-    if domain.is_empty() {
-        return Err("CF_DOMAIN is empty".into());
-    }
+    Ok((token, domain))
+}
 
-    // Create an HTTP agent with a global timeout of 10 seconds
+fn run() -> Result<(), Box<dyn Error>> {
+    let (token, domain) = from_env()?;
     let agent: Agent = Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
         .build()
         .into();
+    let ip = get_ip(&agent)?;
+    let cf = Cloudflare::new(agent, &token);
+    let zone_id = cf.get_zone_id(&domain)?;
+    let record = cf.get_record(&zone_id, &domain)?;
+    if ip == record.content {
+        println!("[{domain}] IP address {ip} unchanged, no update needed.");
+        return Ok(());
+    }
+    cf.patch_record(&zone_id, &record.id, &ip)?;
+    println!("[{domain}] Updated IP: {ip}");
+    Ok(())
+}
 
-    // Retrieve the zone ID from the environment variable or fetch all zones if not provided
-    let zones = match std::env::var("CF_ZONE_ID").unwrap_or_default().trim() {
-        "" => get_zones(&agent, &token)?,
-        id => vec![Zone { id: id.to_string() }],
-    };
-
-    // Iterate through all zones and search for the specified DNS record
-    for zone in zones {
-        // Search for the DNS record in the current zone
-        let records = search_record(&agent, &token, &zone.id, &domain)?;
-        if let Some(record) = records.first() {
-            let ip = get_ip(&agent)?;
-            // Check if the current IP address is the same as the record content
-            if ip == record.content {
-                println!("[{}] IP address {ip} is the same as the record content, no update needed.", domain);
-                return Ok(());
-            }
-            // Update the DNS record with the new IP address
-            update_record(&agent, &token, &zone.id, record, &ip)?;
-            println!("[{}] Updated record: {} -> {}", domain, record.content, ip);
-            return Ok(());
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            ExitCode::FAILURE
         }
     }
-    // If no matching record is found in any zone, return an error
-    Err(format!("Record {} not found", domain).into())
 }
