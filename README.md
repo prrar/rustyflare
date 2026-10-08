@@ -20,6 +20,7 @@ Exit code is `0` when the record is up to date or was updated, and `1` on any er
 | `CF_API_TOKEN` | yes      | Cloudflare API token                                           |
 | `CF_DOMAIN`    | yes      | Full name of the `A` record to update, e.g. `home.example.com` |
 | `CF_INTERVAL`  | no       | Seconds between runs in Docker (default `300`)                 |
+| `CF_VERBOSE`   | no       | If set (any value, even empty) makes it print a message when the IP hasn't changed  |
 
 The token needs:
 - **Zone → DNS → Edit** (to read and update the record)
@@ -31,7 +32,6 @@ Example `.env`:
 ```
 CF_API_TOKEN=your_token
 CF_DOMAIN=home.example.com
-CF_INTERVAL=300
 ```
 
 ## Running with Docker

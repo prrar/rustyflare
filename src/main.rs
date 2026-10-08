@@ -4,6 +4,7 @@
 // ENV:
 // - CF_API_TOKEN: Your Cloudflare API token
 // - CF_DOMAIN: The domain name to update (e.g., sub.example.com)
+// - CF_VERBOSE: if set (any value, even empty) makes it print a message when the IP hasn't changed
 //
 // --prrar
 
@@ -129,17 +130,18 @@ fn get_ip(agent: &Agent) -> Result<String, Box<dyn Error>> {
     Ok(ip.to_string())
 }
 
-fn from_env() -> Result<(String, String), Box<dyn Error>> {
+fn from_env() -> Result<(String, String, bool), Box<dyn Error>> {
     let token = std::env::var("CF_API_TOKEN").map_err(|_| "CF_API_TOKEN not defined.")?;
     let domain = std::env::var("CF_DOMAIN")
         .map_err(|_| "CF_DOMAIN not defined.")?
         .trim_end_matches('.')
         .to_lowercase();
-    Ok((token, domain))
+    let verbose = std::env::var_os("CF_VERBOSE").is_some();
+    Ok((token, domain, verbose))
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let (token, domain) = from_env()?;
+    let (token, domain, verbose) = from_env()?;
     let agent: Agent = Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
         .build()
@@ -149,7 +151,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     let zone_id = cf.get_zone_id(&domain)?;
     let record = cf.get_record(&zone_id, &domain)?;
     if ip == record.content {
-        println!("[{domain}] IP address {ip} unchanged, no update needed.");
+        if verbose {
+            println!("[{domain}] IP address {ip} unchanged, no update needed.");
+        }
         return Ok(());
     }
     cf.patch_record(&zone_id, &record.id, &ip)?;
